@@ -143,7 +143,11 @@ Sharing is caring. It's nice to be nice.
 - `~/.config/systemd/user/loudness-sink.service` — runs
   `pipewire -c filter-chain.conf` (the stock client config, which includes
   user fragments). Enabled, survives reboots.
+- `~/.local/bin/loudness-volume-mirror` + `loudness-volume-mirror.service` —
+  the slider-authority daemon (see "The dead-slider problem" below).
 - Default sink switched to `loudness_sink` via `pactl set-default-sink`.
+
+Tested end-to-end on Debian 13 / PipeWire 1.4.2 / WirePlumber 1.4.2.
 
 **PulseAudio path** (no PipeWire found):
 - `pactl load-module module-ladspa-sink ... plugin=sc4m_1916 label=sc4m
