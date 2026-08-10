@@ -72,10 +72,49 @@ with the note *"never measured"* — and then a year of work inherited that
 unmeasured number as settled truth.
 
 The whole thing was finally solved in one evening — not with better math,
-but with a **microphone**. Play a test tone, record what actually comes out
-of the speakers, toggle one thing at a time. Twenty minutes of measurement
-disproved fifteen months of assumption: nothing was broken. The speakers'
-ceiling is just low, the content is mastered quiet, and the only mathematical
+but with a **microphone**. Here is how the evening actually went, from the
+session log, wrong turns included, because the wrong turns *are* the lesson:
+
+1. Opening complaint, verbatim: *"that's how hard i have to push the volume
+   slider just to get a whisper sound"* — every control at 104–117%.
+2. First suspect: the celebrated kernel patch. Reading the codec registers
+   showed it edits a capability *table* on an amp that has no volume stages
+   at all, plus a second node that isn't even an amplifier. A year of faith,
+   zero decibels. (Its own documentation contained the confession, verbatim:
+   *"+5.5 dB — never measured."*)
+3. The amplifier-asleep theory, tested with the mic: toggle the amp-enable
+   bit off — tone drops 47 dB to the noise floor; toggle it back — tone
+   returns. The amp was awake all along. Fifteen months of "the amp needs
+   unlocking" died in four seconds of measurement.
+4. The AI then produced a beautiful theory: a browser patch was bypassing
+   the Web Audio compressor that YouTube's Stable Volume feature needs for
+   its make-up gain. Confident, elegant, fully documented. The owner's
+   entire reply: *"yeah.... no such hallucinated menu."* The feature wasn't
+   even available on his player. Theory dead on contact with one screenshot.
+5. Next came hours of digital "evidence": the browser apparently emitting
+   audio 24 dB low, impossible volume responses, a frequency sweep that
+   recorded as nothing but clicks — a whole phase-cancellation
+   investigation. Then the control experiment: tap a *known* tone the same
+   way. It read just as broken. **The measuring instrument itself was
+   lying** — on a loaded old CPU, stream capture drops chunks and fabricates
+   exactly the kind of deficit that sends you chasing ghosts. Everything
+   measured through it was thrown away in one stroke.
+6. What never lied: the internal microphone plus a simultaneous reference
+   tone (the dual-band pilot method — see the developer track). Calibrated
+   properly, it proved the browser's audio path was *healthy*, delivering
+   exactly the boost its source code promised.
+7. Final measurement, everything at maximum, real music playing: the music
+   sat ~13 dB below the machine's own measured ceiling — and its digital
+   peaks were already touching full scale. Verdict: **nothing was broken.**
+   Low speaker ceiling, quiet-mastered content, normalization that never
+   boosts. No slider could ever have fixed it.
+8. The fix — squash peaks, lift valleys — measured **+10.5 dB** the same
+   night. The owner's comfortable volume now sits at 44% of a slider that
+   used to be pinned past 100%.
+
+Twenty minutes of honest measurement disproved fifteen months of assumption
+— and two of the AI's own confident theories along the way, both shot down
+by an ordinary human looking at his own screen. The only mathematical
 operation that adds loudness under a fixed ceiling is compression — which,
 funnily enough, is exactly what the project's own abandoned compander math
 had been saying all along.
