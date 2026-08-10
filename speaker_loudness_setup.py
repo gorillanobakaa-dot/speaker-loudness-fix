@@ -94,6 +94,50 @@ Restart=on-failure
 WantedBy=default.target
 """
 
+MIRROR_BIN = HOME / ".local/bin/loudness-volume-mirror"
+MIRROR_UNIT = HOME / ".config/systemd/user/loudness-volume-mirror.service"
+
+MIRROR_BIN_TEXT = """\
+#!/bin/bash
+# Gives the desktop volume slider true authority when a compressor sink is the
+# default output. The slider writes the loudness (default) sink volume, which
+# sits BEFORE the compressor; a 4:1 compressor absorbs ~75% of that change,
+# leaving the slider feeling dead. This daemon mirrors slider moves onto the
+# hardware sink (post-compressor) with a 0.75-power map so pre+post combine
+# into a normal-feeling taper. Event-driven; ~zero CPU when idle.
+LOUD=loudness_sink
+HW=@HW_SINK@
+get_vol() { pactl get-sink-volume "$1" 2>/dev/null | grep -oE '[0-9]+%' | head -1 | tr -d '%'; }
+get_mute() { pactl get-sink-mute "$1" 2>/dev/null | awk '{print $2}'; }
+LAST_V=""; LAST_M=""
+pactl subscribe 2>/dev/null | grep --line-buffered "'change' on sink" | while read -r _; do
+  V=$(get_vol $LOUD); M=$(get_mute $LOUD)
+  [ -z "$V" ] && continue
+  if [ "$V" != "$LAST_V" ]; then
+    HWV=$(awk -v v="$V" 'BEGIN{printf "%d", (v/100)^0.75*100}')
+    pactl set-sink-volume $HW "${HWV}%"
+    LAST_V=$V
+  fi
+  if [ "$M" != "$LAST_M" ]; then
+    pactl set-sink-mute $HW "$M"
+    LAST_M=$M
+  fi
+done
+"""
+
+MIRROR_UNIT_TEXT = """\
+[Unit]
+Description=Mirror default-sink volume onto the hardware sink (slider authority behind the compressor)
+After=pipewire-pulse.service
+
+[Service]
+ExecStart=%h/.local/bin/loudness-volume-mirror
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+"""
+
 # sc4m LADSPA control port order: RMS/peak, attack, release, threshold, ratio,
 # knee, makeup.
 PA_MODULE_ARGS = ("sink_name=%s sink_properties=device.description=Speakers+Loudness "
@@ -219,6 +263,7 @@ def install_pipewire(assume_yes):
         fail("the compressor sink never appeared; check "
              "journalctl --user -u loudness-sink.service")
     run(["pactl", "set-default-sink", SINK_NAME])
+    install_mirror(hw)
 
 
 def install_pulseaudio(assume_yes):
@@ -241,6 +286,25 @@ def install_pulseaudio(assume_yes):
     lines += ["load-module module-ladspa-sink %s %s" % (module_args, MARK),
               "set-default-sink %s %s" % (SINK_NAME, MARK)]
     write_with_backup(PA_USER_DEFAULT, "\n".join(lines) + "\n")
+    if shutil.which("systemctl"):
+        install_mirror(hw)
+    else:
+        say("NOTE", "no systemd user session - skipping the volume-slider "
+            "mirror; the slider will feel weak while the compressor is active.")
+
+
+def install_mirror(hw):
+    write_with_backup(MIRROR_BIN, MIRROR_BIN_TEXT.replace("@HW_SINK@", hw))
+    MIRROR_BIN.chmod(0o755)
+    write_with_backup(MIRROR_UNIT, MIRROR_UNIT_TEXT)
+    for cmd in (["systemctl", "--user", "daemon-reload"],
+                ["systemctl", "--user", "enable", "--now",
+                 "loudness-volume-mirror.service"]):
+        r = run(cmd)
+        if r.returncode != 0:
+            fail("%s -> %s" % (" ".join(cmd), (r.stderr or r.stdout).strip()))
+    say("OK", "volume-slider mirror active (the slider keeps full authority "
+        "even though a compressor sits behind it)")
 
 
 def verify():
@@ -265,7 +329,7 @@ def status():
     say("INFO", "audio server: %s" % server)
     sc4 = find_sc4()
     say("INFO", "SC4 plugin: %s" % (sc4 or "NOT INSTALLED"))
-    for p in (PW_CONF, PW_UNIT):
+    for p in (PW_CONF, PW_UNIT, MIRROR_BIN, MIRROR_UNIT):
         say("INFO", "%s: %s" % (p, "present" if p.exists() else "absent"))
     r = run(["pactl", "list", "short", "sinks"])
     say("INFO", "compressor sink: %s" %
@@ -284,6 +348,13 @@ def uninstall():
     hw, sinks = hardware_sink()
     run(["pactl", "set-default-sink", hw])
     say("OK", "default sink restored to %s" % hw)
+    for p in (MIRROR_BIN, MIRROR_UNIT):
+        unarmor(p)
+    run(["systemctl", "--user", "disable", "--now", "loudness-volume-mirror.service"])
+    for p in (MIRROR_BIN, MIRROR_UNIT):
+        if p.exists():
+            p.unlink()
+            say("OK", "removed %s" % p)
     if server == "pipewire":
         for p in (PW_CONF, PW_UNIT):
             unarmor(p)
@@ -311,7 +382,8 @@ def uninstall():
 def armor():
     if not shutil.which("chattr"):
         fail("chattr not available on this system.")
-    targets = [p for p in (PW_CONF, PW_UNIT, PA_USER_DEFAULT) if p.exists()]
+    targets = [p for p in (PW_CONF, PW_UNIT, PA_USER_DEFAULT, MIRROR_BIN,
+                           MIRROR_UNIT) if p.exists()]
     if not targets:
         fail("nothing installed to protect - run the installer first.")
     for p in targets:
@@ -324,7 +396,7 @@ def armor():
 
 
 def disarm():
-    for p in (PW_CONF, PW_UNIT, PA_USER_DEFAULT):
+    for p in (PW_CONF, PW_UNIT, PA_USER_DEFAULT, MIRROR_BIN, MIRROR_UNIT):
         if p.exists():
             unarmor(p)
             say("OK", "mutable again: %s" % p)

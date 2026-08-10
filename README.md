@@ -45,6 +45,10 @@ sits at 44% of the slider.
 
 ### Is it safe?
 
+- Your volume slider keeps working normally. (A compressor normally fights
+  the volume control and makes the slider feel dead — a discovery made the
+  hard way, twenty minutes after celebrating on the reference machine. A tiny
+  helper ships alongside the compressor to handle it; you will never notice.)
 - It never overwrites your files without a timestamped backup.
 - It checks its own result and undoes itself if the check fails.
 - `--uninstall` removes everything it added.
@@ -191,6 +195,24 @@ hotter, a −12 dBFS tone exits +0.5 dB — compression, not gain. This script
 is the browser-independent, every-app version of the same idea. Running both
 is fine in practice (the browser stage rarely leaves its limiter engaged),
 but if you find it over-dense, either works alone.
+
+### The dead-slider problem (and the third component)
+
+Discovered in production twenty minutes after the first celebration: with the
+compressor sink as the default output, the desktop volume slider writes the
+sink volume — which sits *before* the compressor, and a 4:1 compressor exists
+to cancel input-level changes. Result: ~75% of every slider move is absorbed
+until the signal falls off the threshold, then a cliff into silence. The
+slider feels broken; it is obeying perfectly.
+
+Routing around it (hardware sink as default + stream rules) failed in
+practice — every stream restart escaped the compressor. The shipped fix is a
+15-line event-driven daemon (`loudness-volume-mirror`): on every slider
+change it mirrors the value onto the hardware sink (post-compressor) through
+a 0.75-power map, so the pre-compressor remainder plus the post-compressor
+copy combine into a normal-feeling taper. Verified by ear on the reference
+machine. General law, learned twice in one evening: **never leave the user's
+volume control upstream of a compressor.**
 
 ### Requirements & compatibility
 
