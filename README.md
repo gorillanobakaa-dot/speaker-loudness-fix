@@ -1,5 +1,16 @@
 # speaker-loudness-fix
 
+<!-- WHO-THIS-IS-FOR: managed block, do not edit by hand -->
+
+**One command to make quiet laptop speakers audible again on Linux, proved by measurement.**
+
+Built for the people every other tool prices out: kids with no credit
+card, 15-year-old laptops, data sold by the megabyte. Free forever, by
+design, not as a trial.
+Why, with the numbers: [PHILOSOPHY.md](https://github.com/gorillanobakaa-dot/Gorilla.Opencode/blob/main/PHILOSOPHY.md)
+
+<!-- /WHO-THIS-IS-FOR -->
+
 **Your laptop speakers whisper even with every volume slider at 100%? This
 fixes it. One file, one command, free, undoable.**
 
