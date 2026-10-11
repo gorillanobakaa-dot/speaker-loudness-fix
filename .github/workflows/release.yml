@@ -1,9 +1,18 @@
 # A tag v* publishes a GitHub release: the script must compile and answer --help and --status on a clean Linux
 # runner first, and the page is release-notes/<tag>/page.md (both tracks in full, plain language first).
 name: release
+# Run by hand (workflow_dispatch) with a tag that does not exist yet, it publishes the commit it runs on and creates
+# the tag there.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "the version to publish, e.g. v1.0.0 (created on this commit)"
+        required: true
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
 permissions:
   contents: write
 jobs:
@@ -23,6 +32,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          test -f "release-notes/$GITHUB_REF_NAME/page.md"
-          gh release create "$GITHUB_REF_NAME" --title "speaker-loudness-fix $GITHUB_REF_NAME" \
-            --notes-file "release-notes/$GITHUB_REF_NAME/page.md" --verify-tag speaker_loudness_setup.py
+          test -f "release-notes/$TAG/page.md"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then where=--verify-tag; else where="--target $GITHUB_SHA"; fi
+          gh release create "$TAG" --title "speaker-loudness-fix $TAG" \
+            --notes-file "release-notes/$TAG/page.md" $where speaker_loudness_setup.py
