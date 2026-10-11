@@ -62,7 +62,13 @@ sits at 44% of the slider.
   helper ships alongside the compressor to handle it; you will never notice.)
 - It never overwrites your files without a timestamped backup.
 - It checks its own result and undoes itself if the check fails.
-- `--uninstall` removes everything it added.
+- `--uninstall` removes everything it added, and puts back the output you had
+  before the install (HDMI, headphones, a USB card) - not just the first sound
+  card it finds. If that output is gone by then, it falls back to the speakers.
+- It only asks for `sudo` when it really needs it (to install the SC4 plugin, or
+  to unlock files you armored with `--armor`). Run without a terminal (from
+  another program), it never sits waiting for a password: it stops and prints
+  the one command to run by hand.
 - `--status` just looks and tells you what it sees, changing nothing.
 - Headphone users: compression is a taste thing on headphones. Your system
   volume menu lets you switch output back to plain "Built-in Audio" any time.
