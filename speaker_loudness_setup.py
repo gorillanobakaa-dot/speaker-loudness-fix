@@ -34,6 +34,9 @@ PW_UNIT = HOME / ".config/systemd/user/loudness-sink.service"
 PA_USER_DEFAULT = HOME / ".config/pulse/default.pa"
 SINK_NAME = "loudness_sink"
 MARK = "# added by speaker_loudness_setup"
+# The output that was the default before the compressor took over, so uninstall puts back what the person had
+# (headphones, HDMI, a USB card) rather than the first sound card it finds.
+PREVIOUS_SINK = HOME / ".config/speaker-loudness/previous-default-sink"
 LADSPA_DIRS = ["/usr/lib/ladspa", "/usr/lib/x86_64-linux-gnu/ladspa",
                "/usr/lib64/ladspa", "/usr/local/lib/ladspa"]
 
@@ -149,6 +152,37 @@ def run(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
 
+def sudo(cmd):
+    """sudo that never waits on a password nobody can type: with no terminal (a launcher, an agent) it is
+    `sudo -n`, which fails at once instead of hanging, and the caller says what to run by hand."""
+    return run(["sudo"] + ([] if sys.stdin and sys.stdin.isatty() else ["-n"]) + cmd)
+
+
+def current_default():
+    r = run(["pactl", "get-default-sink"])
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def remember_default():
+    """Record the output in use before the compressor becomes the default (once: a reinstall must not record the
+    compressor itself)."""
+    cur = current_default()
+    if cur and cur != SINK_NAME and "loudness" not in cur:
+        PREVIOUS_SINK.parent.mkdir(parents=True, exist_ok=True)
+        PREVIOUS_SINK.write_text(cur + "\n")
+
+
+def restore_default():
+    """Back to the output the person had; the first hardware sink only when that one is gone."""
+    hw, sinks = hardware_sink()
+    want = PREVIOUS_SINK.read_text().strip() if PREVIOUS_SINK.exists() else ""
+    target = want if want and want in sinks else hw
+    run(["pactl", "set-default-sink", target])
+    note = "" if target == want else (" (the previous output %s is gone)" % want if want else "")
+    say("OK", "default sink restored to %s%s" % (target, note))
+    return target
+
+
 def say(tag, msg):
     print("[%s] %s" % (tag, msg))
 
@@ -199,11 +233,13 @@ def install_sc4(assume_yes):
         ans = input("Run it now with sudo? [y/N] ").strip().lower()
         if ans != "y":
             fail("cannot continue without the SC4 plugin.")
-    r = run(["sudo"] + cmd)
+    r = sudo(cmd)
+    if r.returncode != 0 and "password is required" in (r.stderr or ""):
+        fail("installing the SC4 plugin needs sudo and there is no terminal to ask for the password. "
+             "Run this once by hand, then rerun: sudo " + " ".join(cmd))
     if r.returncode != 0 and mgr == "apt-get":
         say("WARN", "retrying apt over IPv4 (some networks break IPv6 fetches)")
-        r = run(["sudo", "apt-get", "install", "-y",
-                 "-o", "Acquire::ForceIPv4=true", "swh-plugins"])
+        r = sudo(["apt-get", "install", "-y", "-o", "Acquire::ForceIPv4=true", "swh-plugins"])
     if r.returncode != 0:
         fail("package install failed:\n%s" % (r.stderr or r.stdout).strip())
     if not find_sc4():
@@ -262,6 +298,7 @@ def install_pipewire(assume_yes):
     if not wait_for_sink():
         fail("the compressor sink never appeared; check "
              "journalctl --user -u loudness-sink.service")
+    remember_default()
     run(["pactl", "set-default-sink", SINK_NAME])
     install_mirror(hw)
 
@@ -275,6 +312,7 @@ def install_pulseaudio(assume_yes):
         fail("module-ladspa-sink refused to load: %s" % (r.stderr or r.stdout).strip())
     if not wait_for_sink():
         fail("the compressor sink never appeared after module load.")
+    remember_default()
     run(["pactl", "set-default-sink", SINK_NAME])
     lines = []
     if PA_USER_DEFAULT.exists():
@@ -338,19 +376,37 @@ def status():
     say("INFO", "default sink: %s" % r.stdout.strip())
 
 
+def immutable(path):
+    """Is the file armored (chattr +i)? lsattr reads that without root."""
+    if not path.exists() or not shutil.which("lsattr"):
+        return False
+    r = run(["lsattr", "-d", str(path)])
+    return r.returncode == 0 and "i" in r.stdout.split()[0] if r.stdout.split() else False
+
+
 def unarmor(path):
-    if path.exists():
-        run(["sudo", "chattr", "-i", str(path)])
+    """chattr -i, only on a file that is armored: sudo is not asked for on a file that does not need it."""
+    if immutable(path):
+        r = sudo(["chattr", "-i", str(path)])
+        if r.returncode != 0:
+            fail("%s is armored (--armor) and could not be made mutable: %s. Run once by hand: "
+                 "sudo chattr -i %s" % (path, (r.stderr or r.stdout).strip(), path))
+
+
+def systemctl_user(*args):
+    if shutil.which("systemctl"):
+        run(["systemctl", "--user"] + list(args))
 
 
 def uninstall():
     server = detect_server()
-    hw, sinks = hardware_sink()
-    run(["pactl", "set-default-sink", hw])
-    say("OK", "default sink restored to %s" % hw)
+    if current_default() == SINK_NAME:
+        restore_default()
+    else:
+        say("OK", "default sink left as it is (%s): the compressor is not the default" % current_default())
     for p in (MIRROR_BIN, MIRROR_UNIT):
         unarmor(p)
-    run(["systemctl", "--user", "disable", "--now", "loudness-volume-mirror.service"])
+    systemctl_user("disable", "--now", "loudness-volume-mirror.service")
     for p in (MIRROR_BIN, MIRROR_UNIT):
         if p.exists():
             p.unlink()
@@ -358,12 +414,12 @@ def uninstall():
     if server == "pipewire":
         for p in (PW_CONF, PW_UNIT):
             unarmor(p)
-        run(["systemctl", "--user", "disable", "--now", "loudness-sink.service"])
+        systemctl_user("disable", "--now", "loudness-sink.service")
         for p in (PW_CONF, PW_UNIT):
             if p.exists():
                 p.unlink()
                 say("OK", "removed %s" % p)
-        run(["systemctl", "--user", "daemon-reload"])
+        systemctl_user("daemon-reload")
     else:
         if PA_USER_DEFAULT.exists():
             unarmor(PA_USER_DEFAULT)
@@ -376,6 +432,8 @@ def uninstall():
             if "module-ladspa-sink" in line and SINK_NAME in line:
                 run(["pactl", "unload-module", line.split("\t")[0]])
                 say("OK", "unloaded ladspa sink module")
+    if PREVIOUS_SINK.exists():
+        PREVIOUS_SINK.unlink()
     say("DONE", "uninstalled. Sound now goes straight to the hardware sink.")
 
 
@@ -387,7 +445,7 @@ def armor():
     if not targets:
         fail("nothing installed to protect - run the installer first.")
     for p in targets:
-        r = run(["sudo", "chattr", "+i", str(p)])
+        r = sudo(["chattr", "+i", str(p)])
         if r.returncode == 0:
             say("OK", "immutable: %s" % p)
         else:
@@ -397,7 +455,7 @@ def armor():
 
 def disarm():
     for p in (PW_CONF, PW_UNIT, PA_USER_DEFAULT, MIRROR_BIN, MIRROR_UNIT):
-        if p.exists():
+        if immutable(p):
             unarmor(p)
             say("OK", "mutable again: %s" % p)
 
@@ -436,8 +494,7 @@ def main():
             "Protect from cleanup scripts: --armor")
     else:
         say("ERROR", "verification failed - reverting default sink")
-        hw, _ = hardware_sink()
-        run(["pactl", "set-default-sink", hw])
+        restore_default()
         sys.exit(1)
 
 
