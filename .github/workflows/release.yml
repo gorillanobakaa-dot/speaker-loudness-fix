@@ -1,0 +1,28 @@
+# A tag v* publishes a GitHub release: the script must compile and answer --help and --status on a clean Linux
+# runner first, and the page is release-notes/<tag>/page.md (both tracks in full, plain language first).
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: the script compiles and answers without changing anything
+        run: |
+          python -m py_compile speaker_loudness_setup.py
+          python speaker_loudness_setup.py --help
+          python speaker_loudness_setup.py --status || true
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -f "release-notes/$GITHUB_REF_NAME/page.md"
+          gh release create "$GITHUB_REF_NAME" --title "speaker-loudness-fix $GITHUB_REF_NAME" \
+            --notes-file "release-notes/$GITHUB_REF_NAME/page.md" --verify-tag speaker_loudness_setup.py
